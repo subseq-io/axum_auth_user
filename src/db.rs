@@ -1,13 +1,19 @@
+use once_cell::sync::Lazy;
 use serde_json::Value;
+use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::group_id::GroupId;
 use crate::user_id::UserId;
 
-pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+pub static MIGRATOR: Lazy<Migrator> = Lazy::new(|| {
+    let mut m = sqlx::migrate!("./migrations");
+    m.set_ignore_missing(true);
+    m
+});
 
-pub async fn create_user_tables(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+pub async fn create_user_tables(pool: &PgPool) -> Result<(), MigrateError> {
     MIGRATOR.run(pool).await
 }
 

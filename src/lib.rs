@@ -1,4 +1,9 @@
+#[cfg(feature = "api")]
+pub mod api;
 pub mod auth;
+#[cfg(feature = "sqlx")]
+pub mod db;
+pub mod group_id;
 pub mod oidc;
 pub mod prelude;
 pub mod rustls;

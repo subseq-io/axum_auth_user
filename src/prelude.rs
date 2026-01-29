@@ -294,6 +294,10 @@ impl RejectReason {
         }
     }
 
+    pub fn database<S: Into<String>>(msg: S) -> Self {
+        RejectReason::DatabaseError { msg: msg.into() }
+    }
+
     pub fn forbidden<S: Into<String>>(user_id: UserId, reason: S) -> Self {
         RejectReason::Forbidden {
             user_id,

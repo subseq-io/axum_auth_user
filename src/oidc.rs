@@ -144,7 +144,7 @@ impl OidcCredentials {
     ) -> AnyResult<Self> {
         Ok(Self {
             client_id: ClientId::new(client_id.into()),
-            client_secret: ClientSecret::new(client_secret.into()),
+            client_secret: Some(ClientSecret::new(client_secret.into())),
             base_url: Url::parse(&base_url.into())?,
             redirect_url: RedirectUrl::new(redirect_url.into())?,
         })
@@ -215,7 +215,7 @@ impl IdentityProvider {
         let client = CoreClient::from_provider_metadata(
             config,
             oidc.client_id.clone(),
-            oidc.client_secret.as_ref().map(|secret| secret.clone())
+            oidc.client_secret.as_ref().map(|secret| secret.clone()),
         )
         .set_redirect_uri(oidc.redirect_url.clone());
 

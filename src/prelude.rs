@@ -266,6 +266,9 @@ impl AuthenticatedUser {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct MaybeAuthenticatedUser(pub Option<AuthenticatedUser>);
+
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum RejectReason {

@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::convert::Infallible;
+use std::future;
 use std::task::{Context, Poll};
 
 use axum::{
@@ -22,7 +24,7 @@ use urlencoding::decode;
 
 use crate::oidc::{IdentityProvider, OidcToken};
 use crate::prelude::{
-    AuthRejectReason, AuthenticatedUser, RejectReason, ValidatesIdentity, validate_bearer,
+    AuthRejectReason, AuthenticatedUser, MaybeAuthenticatedUser, RejectReason, ValidatesIdentity, validate_bearer,
 };
 
 pub const AUTH_COOKIE: &str = "access_token";
@@ -191,6 +193,21 @@ where
             .ok_or(StatusCode::UNAUTHORIZED);
 
         Box::pin(async move { result })
+    }
+}
+
+impl<S> FromRequestParts<S> for MaybeAuthenticatedUser
+where
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl future::Future<Output = Result<Self, Self::Rejection>> + Send {
+        let user: Option<AuthenticatedUser> = parts.extensions.get::<AuthenticatedUser>().cloned();
+        future::ready(Ok(MaybeAuthenticatedUser(user)))
     }
 }
 

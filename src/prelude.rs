@@ -82,6 +82,7 @@ impl AuthRejectReason {
 
 /// Implement this for your application state to enable identity validation
 ///
+/// ```ignore
 /// impl ValidatesIdentity for AppState {
 ///     fn validate_bearer(
 ///         &self,
@@ -97,10 +98,14 @@ impl AuthRejectReason {
 ///         self.idp.validate_token(token)
 ///     }
 ///
-///     async fn refresh_token(&self, token: OidcToken) -> anyhow::Result<OidcToken> {
-///         self.idp.refresh(token).await
+///     fn refresh_token(
+///         &self,
+///         token: OidcToken,
+///     ) -> impl std::future::Future<Output = anyhow::Result<OidcToken>> + Send {
+///         self.idp.refresh(token)
 ///     }
 /// }
+/// ```
 pub trait ValidatesIdentity {
     fn validate_bearer(
         &self,

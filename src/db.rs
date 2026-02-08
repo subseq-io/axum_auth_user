@@ -172,37 +172,44 @@ impl UserRow {
 }
 
 #[derive(Debug, Clone, FromRow)]
-pub struct AccessRoleRow {
+pub struct UserRoleRow {
     pub user_id: Uuid,
+    pub scope: String,
+    pub scope_id: String,
     pub role_name: String,
 }
 
-impl AccessRoleRow {
-    pub fn new(user_id: UserId, role_name: &str) -> Self {
+impl UserRoleRow {
+    pub fn new(user_id: UserId, scope: &str, scope_id: &str, role_name: &str) -> Self {
         Self {
             user_id: user_id.0,
+            scope: scope.to_string(),
+            scope_id: scope_id.to_string(),
             role_name: role_name.to_string(),
         }
     }
 
     pub fn table_name() -> &'static str {
-        "auth.access_roles"
+        "auth.user_roles"
     }
 
     pub fn columns() -> &'static str {
-        "user_id, role_name"
+        "user_id, scope, scope_id, role_name"
     }
 
-    pub async fn allow(pool: &PgPool, row: &AccessRoleRow) -> Result<(), sqlx::Error> {
+    pub async fn allow(pool: &PgPool, row: &UserRoleRow) -> Result<(), sqlx::Error> {
         sqlx::query(&format!(
             r#"
             INSERT INTO {} ({})
-            VALUES ($1, $2)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, scope, scope_id, role_name) DO NOTHING
             "#,
             Self::table_name(),
             Self::columns()
         ))
         .bind(row.user_id)
+        .bind(&row.scope)
+        .bind(&row.scope_id)
         .bind(&row.role_name)
         .execute(pool)
         .await?;
@@ -210,15 +217,20 @@ impl AccessRoleRow {
         Ok(())
     }
 
-    pub async fn revoke(pool: &PgPool, row: &AccessRoleRow) -> Result<(), sqlx::Error> {
+    pub async fn revoke(pool: &PgPool, row: &UserRoleRow) -> Result<(), sqlx::Error> {
         sqlx::query(&format!(
             r#"
             DELETE FROM {}
-            WHERE user_id = $1 AND role_name = $2
+            WHERE user_id = $1
+              AND scope = $2
+              AND scope_id = $3
+              AND role_name = $4
             "#,
             Self::table_name()
         ))
         .bind(row.user_id)
+        .bind(&row.scope)
+        .bind(&row.scope_id)
         .bind(&row.role_name)
         .execute(pool)
         .await?;
@@ -229,16 +241,24 @@ impl AccessRoleRow {
     pub async fn has_role(
         pool: &PgPool,
         user_id: UserId,
+        scope: &str,
+        scope_id: &str,
         role_name: &str,
     ) -> Result<bool, sqlx::Error> {
         let count: (i64,) = sqlx::query_as(&format!(
             r#"
-            SELECT COUNT(*) FROM {}
-            WHERE user_id = $1 AND role_name = $2
+            SELECT COUNT(*)
+            FROM {}
+            WHERE user_id = $1
+              AND scope = $2
+              AND scope_id = $3
+              AND role_name = $4
             "#,
             Self::table_name()
         ))
         .bind(user_id.0)
+        .bind(scope)
+        .bind(scope_id)
         .bind(role_name)
         .fetch_one(pool)
         .await?;
@@ -247,20 +267,256 @@ impl AccessRoleRow {
     }
 
     pub async fn roles(pool: &PgPool, user_id: UserId) -> Result<Vec<Self>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, AccessRoleRow>(&format!(
+        sqlx::query_as::<_, UserRoleRow>(&format!(
             r#"
             SELECT {}
             FROM {}
             WHERE user_id = $1
+            ORDER BY scope ASC, scope_id ASC, role_name ASC
             "#,
             Self::columns(),
             Self::table_name()
         ))
         .bind(user_id.0)
         .fetch_all(pool)
+        .await
+    }
+
+    pub async fn roles_in_scope(
+        pool: &PgPool,
+        user_id: UserId,
+        scope: &str,
+        scope_id: &str,
+    ) -> Result<Vec<Self>, sqlx::Error> {
+        sqlx::query_as::<_, UserRoleRow>(&format!(
+            r#"
+            SELECT {}
+            FROM {}
+            WHERE user_id = $1
+              AND scope = $2
+              AND scope_id = $3
+            ORDER BY role_name ASC
+            "#,
+            Self::columns(),
+            Self::table_name()
+        ))
+        .bind(user_id.0)
+        .bind(scope)
+        .bind(scope_id)
+        .fetch_all(pool)
+        .await
+    }
+}
+
+/// Backward-compatible global user roles view on top of scoped user_roles.
+#[derive(Debug, Clone, FromRow)]
+pub struct AccessRoleRow {
+    pub user_id: Uuid,
+    pub role_name: String,
+}
+
+impl AccessRoleRow {
+    const GLOBAL_SCOPE: &'static str = "global";
+    const GLOBAL_SCOPE_ID: &'static str = "global";
+
+    pub fn new(user_id: UserId, role_name: &str) -> Self {
+        Self {
+            user_id: user_id.0,
+            role_name: role_name.to_string(),
+        }
+    }
+
+    pub fn table_name() -> &'static str {
+        UserRoleRow::table_name()
+    }
+
+    pub fn columns() -> &'static str {
+        "user_id, role_name"
+    }
+
+    pub async fn allow(pool: &PgPool, row: &AccessRoleRow) -> Result<(), sqlx::Error> {
+        let scoped = UserRoleRow {
+            user_id: row.user_id,
+            scope: Self::GLOBAL_SCOPE.to_string(),
+            scope_id: Self::GLOBAL_SCOPE_ID.to_string(),
+            role_name: row.role_name.clone(),
+        };
+        UserRoleRow::allow(pool, &scoped).await
+    }
+
+    pub async fn revoke(pool: &PgPool, row: &AccessRoleRow) -> Result<(), sqlx::Error> {
+        let scoped = UserRoleRow {
+            user_id: row.user_id,
+            scope: Self::GLOBAL_SCOPE.to_string(),
+            scope_id: Self::GLOBAL_SCOPE_ID.to_string(),
+            role_name: row.role_name.clone(),
+        };
+        UserRoleRow::revoke(pool, &scoped).await
+    }
+
+    pub async fn has_role(
+        pool: &PgPool,
+        user_id: UserId,
+        role_name: &str,
+    ) -> Result<bool, sqlx::Error> {
+        UserRoleRow::has_role(
+            pool,
+            user_id,
+            Self::GLOBAL_SCOPE,
+            Self::GLOBAL_SCOPE_ID,
+            role_name,
+        )
+        .await
+    }
+
+    pub async fn roles(pool: &PgPool, user_id: UserId) -> Result<Vec<Self>, sqlx::Error> {
+        let rows =
+            UserRoleRow::roles_in_scope(pool, user_id, Self::GLOBAL_SCOPE, Self::GLOBAL_SCOPE_ID)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| Self {
+                user_id: row.user_id,
+                role_name: row.role_name,
+            })
+            .collect())
+    }
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct GroupRoleRow {
+    pub group_id: Uuid,
+    pub scope: String,
+    pub scope_id: String,
+    pub role_name: String,
+}
+
+impl GroupRoleRow {
+    pub fn new(group_id: GroupId, scope: &str, scope_id: &str, role_name: &str) -> Self {
+        Self {
+            group_id: group_id.0,
+            scope: scope.to_string(),
+            scope_id: scope_id.to_string(),
+            role_name: role_name.to_string(),
+        }
+    }
+
+    pub fn table_name() -> &'static str {
+        "auth.group_roles"
+    }
+
+    pub fn columns() -> &'static str {
+        "group_id, scope, scope_id, role_name"
+    }
+
+    pub async fn allow(pool: &PgPool, row: &GroupRoleRow) -> Result<(), sqlx::Error> {
+        sqlx::query(&format!(
+            r#"
+            INSERT INTO {} ({})
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (group_id, scope, scope_id, role_name) DO NOTHING
+            "#,
+            Self::table_name(),
+            Self::columns()
+        ))
+        .bind(row.group_id)
+        .bind(&row.scope)
+        .bind(&row.scope_id)
+        .bind(&row.role_name)
+        .execute(pool)
         .await?;
 
-        Ok(rows)
+        Ok(())
+    }
+
+    pub async fn revoke(pool: &PgPool, row: &GroupRoleRow) -> Result<(), sqlx::Error> {
+        sqlx::query(&format!(
+            r#"
+            DELETE FROM {}
+            WHERE group_id = $1
+              AND scope = $2
+              AND scope_id = $3
+              AND role_name = $4
+            "#,
+            Self::table_name()
+        ))
+        .bind(row.group_id)
+        .bind(&row.scope)
+        .bind(&row.scope_id)
+        .bind(&row.role_name)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn has_role(
+        pool: &PgPool,
+        group_id: GroupId,
+        scope: &str,
+        scope_id: &str,
+        role_name: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let count: (i64,) = sqlx::query_as(&format!(
+            r#"
+            SELECT COUNT(*)
+            FROM {}
+            WHERE group_id = $1
+              AND scope = $2
+              AND scope_id = $3
+              AND role_name = $4
+            "#,
+            Self::table_name()
+        ))
+        .bind(group_id.0)
+        .bind(scope)
+        .bind(scope_id)
+        .bind(role_name)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(count.0 > 0)
+    }
+
+    pub async fn roles(pool: &PgPool, group_id: GroupId) -> Result<Vec<Self>, sqlx::Error> {
+        sqlx::query_as::<_, GroupRoleRow>(&format!(
+            r#"
+            SELECT {}
+            FROM {}
+            WHERE group_id = $1
+            ORDER BY scope ASC, scope_id ASC, role_name ASC
+            "#,
+            Self::columns(),
+            Self::table_name()
+        ))
+        .bind(group_id.0)
+        .fetch_all(pool)
+        .await
+    }
+
+    pub async fn roles_in_scope(
+        pool: &PgPool,
+        group_id: GroupId,
+        scope: &str,
+        scope_id: &str,
+    ) -> Result<Vec<Self>, sqlx::Error> {
+        sqlx::query_as::<_, GroupRoleRow>(&format!(
+            r#"
+            SELECT {}
+            FROM {}
+            WHERE group_id = $1
+              AND scope = $2
+              AND scope_id = $3
+            ORDER BY role_name ASC
+            "#,
+            Self::columns(),
+            Self::table_name()
+        ))
+        .bind(group_id.0)
+        .bind(scope)
+        .bind(scope_id)
+        .fetch_all(pool)
+        .await
     }
 }
 

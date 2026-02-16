@@ -13,6 +13,7 @@ cookie = "0.18.0"
 hyper = { version = "1.4.1" }
 email_address = "0.2.4"
 futures-util = "0.3.30"
+jsonwebtoken = "9.3.1"
 openidconnect = "3.4.0"
 reqwest = { version = "0.11.23", features = ["json", "rustls-tls"] }
 rustls = "0.23.11"
@@ -32,3 +33,8 @@ once_cell = "1.21.3"
 [features]
 default = ["api"]
 api = ["sqlx"]
+
+[dev-dependencies]
+rsa = "0.9.8"
+rand_core = "0.6.4"
+tokio = { version = "1.44.0", features = ["macros", "rt-multi-thread", "net"] }
